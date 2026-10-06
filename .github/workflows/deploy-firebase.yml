@@ -1,0 +1,48 @@
+name: Deploy Firebase
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Firebase deploy target
+        type: choice
+        required: true
+        default: hosting
+        options:
+          - hosting
+          - hosting,functions
+          - hosting,functions,firestore:rules,firestore:indexes,storage
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.6'
+          channel: stable
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: firebase/functions/package-lock.json
+      - run: flutter pub get
+      - run: flutter test
+      - run: flutter build web --release --no-wasm-dry-run
+      - run: npm ci
+        working-directory: firebase/functions
+      - run: rm -rf firebase/build/web && mkdir -p firebase/build && cp -R build/web firebase/build/web
+      - uses: w9jds/firebase-action@v13.32.0
+        with:
+          args: deploy --only ${{ github.event_name == 'workflow_dispatch' && inputs.target || 'hosting' }} --config firebase/firebase.json --project uchet-9a732
+        env:
+          GCP_SA_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_UCHET_9A732 }}

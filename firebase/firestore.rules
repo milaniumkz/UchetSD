@@ -1,0 +1,894 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuthed() {
+      return request.auth != null;
+    }
+
+    function legacySecretsUnchanged() {
+      return request.resource == null ||
+        resource == null ||
+        (
+          (
+            (
+              !request.resource.data.keys().hasAny(['password']) &&
+              !resource.data.keys().hasAny(['password'])
+            ) ||
+            request.resource.data.password == resource.data.password
+          ) &&
+          (
+            (
+              !request.resource.data.keys().hasAny(['pin']) &&
+              !resource.data.keys().hasAny(['pin'])
+            ) ||
+            request.resource.data.pin == resource.data.pin
+          )
+        );
+    }
+
+    function selfUserMutableFields() {
+      return [
+        'idCompany',
+        'activeCompanyId',
+        'companyIds',
+        'companyScope',
+        'role',
+        'onboarding_complete',
+        'onboarding_steps',
+        'onboarding_companies_done',
+        'onboarding_skipped',
+        'company_layout',
+        'selected_step_key'
+      ];
+    }
+
+    function canUpdateOwnUserDocument(documentId) {
+      return documentId == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(selfUserMutableFields()) &&
+        (
+          request.resource.data.idCompany == resource.data.idCompany ||
+          request.resource.data.idCompany == null ||
+          isCompanyMember(request.resource.data.idCompany)
+        );
+    }
+
+    function companyId() {
+      return request.auth.token.companyId != null
+        ? request.auth.token.companyId
+        : (request.auth.token.company_id != null
+          ? request.auth.token.company_id
+          : (request.auth.token.idCompany != null
+            ? request.auth.token.idCompany
+            : null));
+    }
+
+    function userCompanyId() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.idCompany;
+    }
+
+    function currentUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function roleAllowedCompanyIds() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role_allowed_company_ids;
+    }
+
+    function selectedUserCompanyId() {
+      return currentUserData().activeCompanyId != null
+        ? currentUserData().activeCompanyId
+        : currentUserData().idCompany;
+    }
+
+    function fallbackCompanyList() {
+      return currentUserData().companyIds is list
+        ? currentUserData().companyIds
+        : [];
+    }
+
+    function allowedCompanyList() {
+      return currentUserData().role_allowed_company_ids is list
+        ? currentUserData().role_allowed_company_ids
+        : (
+            currentUserData().roleAllowedCompanyIds is list
+              ? currentUserData().roleAllowedCompanyIds
+              : (
+                  currentUserData().role_companies is list
+                    ? currentUserData().role_companies
+                    : []
+                )
+          );
+    }
+
+    function rolePermissions() {
+      return currentUserData().role_permissions is list
+        ? currentUserData().role_permissions
+        : (
+            currentUserData().rolePerms is list
+              ? currentUserData().rolePerms
+              : []
+          );
+    }
+
+    function tariffPermissions() {
+      return currentUserData().tariff_permissions is list
+        ? currentUserData().tariff_permissions
+        : (
+            currentUserData().tariffPerms is list
+              ? currentUserData().tariffPerms
+              : []
+          );
+    }
+
+    function hasLegacyRoleSnapshotGap() {
+      return isAuthed() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        !(currentUserData().role_permissions is list) &&
+        !(currentUserData().rolePerms is list);
+    }
+
+    function selectedCompanyAllowed() {
+      return allowedCompanyList().size() == 0 ||
+        (
+          selectedUserCompanyId() != null &&
+          allowedCompanyList().hasAny([selectedUserCompanyId()])
+        );
+    }
+
+    function hasUserPermission(permissionKey) {
+      return isGlobalAdmin() || (
+        isAuthed() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        selectedCompanyAllowed() &&
+        rolePermissions().hasAny([permissionKey]) &&
+        (
+          tariffPermissions().size() == 0 ||
+          tariffPermissions().hasAny([permissionKey])
+        )
+      );
+    }
+
+    function hasAnyUserPermission(permissionKeys) {
+      return isGlobalAdmin() || (
+        isAuthed() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        selectedCompanyAllowed() &&
+        rolePermissions().hasAny(permissionKeys) &&
+        (
+          tariffPermissions().size() == 0 ||
+          tariffPermissions().hasAny(permissionKeys)
+        )
+      );
+    }
+
+    function isGlobalAdmin() {
+      return isAuthed() && (
+        request.auth.token.is_admin == true ||
+        request.auth.token.admin == true ||
+        request.auth.token.role in ['admin', 'super_admin', 'superadmin', 'owner'] ||
+        (
+          exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          (
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.is_admin == true ||
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.admin == true ||
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'super_admin', 'superadmin', 'owner']
+          )
+        )
+      );
+    }
+
+    function canSelfJoinCompany(cid) {
+      return (userCompanyId() != null && userCompanyId() == cid) ||
+        (roleAllowedCompanyIds() != null &&
+         roleAllowedCompanyIds().hasAny([cid]));
+    }
+
+    function isCompanyMember(cid) {
+      return cid != null
+        && exists(/databases/$(database)/documents/companies/$(cid))
+        && request.auth.uid in get(/databases/$(database)/documents/companies/$(cid)).data.members;
+    }
+
+    function sameCompany() {
+      return isGlobalAdmin() || (isAuthed() && (
+          (
+            companyId() != null &&
+            (
+              (resource != null && resource.data.idCompany == companyId()) ||
+              (request.resource != null &&
+                request.resource.data.idCompany == companyId())
+            )
+          ) ||
+          (
+            userCompanyId() != null &&
+            (
+              (resource != null && resource.data.idCompany == userCompanyId()) ||
+              (request.resource != null &&
+                request.resource.data.idCompany == userCompanyId())
+            )
+          ) ||
+          (
+            (resource != null && resource.data.user_id == request.auth.uid) ||
+            (request.resource != null &&
+              request.resource.data.user_id == request.auth.uid)
+          ) ||
+          (
+            (resource != null && resource.data.uid == request.auth.uid) ||
+            (request.resource != null &&
+              request.resource.data.uid == request.auth.uid)
+          )
+        ));
+    }
+
+    match /users/{document} {
+      allow create: if isAuthed() &&
+        (isGlobalAdmin() || document == request.auth.uid);
+      allow read: if isAuthed() &&
+        (isGlobalAdmin() ||
+          document == request.auth.uid ||
+          sameCompany());
+      allow update, delete: if isAuthed() && (
+        legacySecretsUnchanged() &&
+        (
+          isGlobalAdmin() ||
+          sameCompany() ||
+          canUpdateOwnUserDocument(document)
+        )
+      );
+    }
+
+    match /country/{document} {
+      allow read: if true;
+      allow create, update, delete: if isGlobalAdmin();
+    }
+
+    match /valuta/{document} {
+      allow read: if true;
+      allow create, update, delete: if isGlobalAdmin() || sameCompany();
+    }
+
+    match /oced/{document} {
+      allow read: if true;
+      allow create, update, delete: if isGlobalAdmin();
+    }
+
+    match /nalogi/{document} {
+      allow read: if true;
+      allow create, update, delete: if isGlobalAdmin();
+    }
+
+    match /otrasli/{document} {
+      allow read: if true;
+      allow create, update, delete: if isGlobalAdmin();
+    }
+
+    match /forma/{document} {
+      allow read: if true;
+      allow create, update, delete: if isGlobalAdmin();
+    }
+
+    // Компании
+    match /companies/{document} {
+      allow create: if isAuthed() &&
+        (isGlobalAdmin() || request.resource.data.ownerId == request.auth.uid);
+      allow read: if isAuthed() &&
+        (isGlobalAdmin() || request.auth.uid in resource.data.members);
+      allow update: if isAuthed() && (
+        isGlobalAdmin() ||
+        request.auth.uid in resource.data.members ||
+        (
+          canSelfJoinCompany(document) &&
+          request.resource.data.members is list &&
+          resource.data.members is list &&
+          request.resource.data.members.size() == resource.data.members.size() + 1 &&
+          request.resource.data.members.hasAll(resource.data.members) &&
+          request.resource.data.members.hasAny([request.auth.uid]) &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['members', 'updated_at'])
+        )
+      );
+      allow delete: if isAuthed() &&
+        (isGlobalAdmin() || request.auth.uid == resource.data.ownerId);
+    }
+
+    match /users/{parent}/scheta/{document} {
+      allow create, read, update, delete: if request.auth.uid == parent;
+    }
+
+    match /sheta/{document} {
+      allow read: if sameCompany() && (
+        hasAnyUserPermission([
+          'scheta.manage',
+          'scheta.view',
+          'sales.cash',
+          'money.obligations',
+          'money.company_expenses',
+          'money.company'
+        ]) ||
+        hasLegacyRoleSnapshotGap()
+      );
+      allow create, update, delete: if sameCompany() &&
+        hasAnyUserPermission([
+          'scheta.manage',
+          'scheta.add',
+          'scheta.edit',
+          'scheta.delete',
+          'scheta.deactivate',
+          'scheta.withdrawal',
+          'sales.cash',
+          'money.obligations',
+          'money.company_expenses'
+        ]);
+    }
+
+    match /money_wallets/{document} {
+      allow read: if sameCompany() && (
+        hasAnyUserPermission([
+          'scheta.manage',
+          'scheta.view',
+          'sales.cash',
+          'money.obligations',
+          'money.company_expenses',
+          'money.company'
+        ]) ||
+        hasLegacyRoleSnapshotGap()
+      );
+      allow create, update, delete: if sameCompany() &&
+        hasAnyUserPermission([
+          'scheta.manage',
+          'scheta.add',
+          'scheta.edit',
+          'scheta.delete',
+          'scheta.withdrawal',
+          'sales.cash',
+          'sales.cashiers',
+          'money.obligations',
+          'money.company_expenses'
+        ]);
+    }
+
+    match /ushet/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /tranzaction/{document} {
+      allow read: if sameCompany() && (
+        hasAnyUserPermission([
+          'tranzaction.view',
+          'tranzaction.filter',
+          'tranzaction.export',
+          'sales.cash',
+          'money.obligations',
+          'money.company_expenses',
+          'money.expense_categories',
+          'analytics.fin',
+          'money.company',
+          'scheta.manage',
+          'scheta.view'
+        ]) ||
+        hasLegacyRoleSnapshotGap()
+      );
+      allow create, update, delete: if sameCompany() &&
+        hasAnyUserPermission([
+          'tranzaction.add',
+          'tranzaction.edit',
+          'tranzaction.delete',
+          'sales.cash',
+          'money.obligations',
+          'money.company_expenses',
+          'scheta.withdrawal'
+        ]);
+    }
+
+    match /accounting_entries/{document} {
+      allow read: if sameCompany() && (
+        hasAnyUserPermission([
+          'tranzaction.view',
+          'tranzaction.filter',
+          'tranzaction.export',
+          'sales.cash',
+          'money.obligations',
+          'money.company_expenses',
+          'money.expense_categories',
+          'analytics.fin',
+          'money.company',
+          'scheta.view',
+          'uchet.view'
+        ]) ||
+        hasLegacyRoleSnapshotGap()
+      );
+      allow create, update, delete: if sameCompany() &&
+        hasAnyUserPermission([
+          'tranzaction.add',
+          'tranzaction.edit',
+          'tranzaction.delete',
+          'sales.cash',
+          'money.obligations',
+          'money.company_expenses',
+          'scheta.withdrawal'
+        ]);
+    }
+
+    match /cogs_register/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /batch_consumptions/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /business_events/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /statRashod/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /expense_plans/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /budget_projects/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /funding_requests/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /funding_request_categories/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /obyaz/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /debt_register/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /debt_payment_links/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /nomenklatura/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /nomenclature_categories/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /roles/{document} {
+      allow read: if true;
+      allow create, update, delete: if sameCompany() &&
+        hasUserPermission('settings.roles');
+    }
+
+    match /role_templates/{document} {
+      allow read, create, update, delete: if isGlobalAdmin();
+    }
+
+    match /services/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /service_categories/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /service_cost_models/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /service_executions/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /suppliers/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /sales/{document} {
+      allow read: if sameCompany() &&
+        hasAnyUserPermission([
+          'sales.view',
+          'sales.shops',
+          'sales.cashiers',
+          'sales.clients',
+          'sales.controls',
+          'sales.cash',
+          'sales.reports',
+          'sales.income',
+          'sales.expenses',
+          'sales.profit.shop',
+          'sales.profit.cashier',
+          'analytics.sales'
+        ]);
+      allow create, update, delete: if sameCompany() &&
+        hasAnyUserPermission([
+          'sales.add',
+          'sales.edit',
+          'sales.delete',
+          'sales.cash'
+        ]);
+    }
+
+    match /sales_items/{document} {
+      allow read: if sameCompany() &&
+        hasAnyUserPermission([
+          'sales.view',
+          'sales.cash',
+          'sales.reports',
+          'analytics.sales'
+        ]);
+      allow create, update, delete: if sameCompany() &&
+        hasAnyUserPermission([
+          'sales.add',
+          'sales.edit',
+          'sales.delete',
+          'sales.cash'
+        ]);
+    }
+
+    match /sale_item_cogs/{document} {
+      allow read: if sameCompany() &&
+        hasAnyUserPermission([
+          'sales.view',
+          'sales.cash',
+          'sales.reports',
+          'analytics.sales'
+        ]);
+      allow create, update, delete: if sameCompany() &&
+        hasAnyUserPermission([
+          'sales.add',
+          'sales.edit',
+          'sales.delete',
+          'sales.cash'
+        ]);
+    }
+
+    match /cashiers/{document} {
+      allow read: if sameCompany() &&
+        hasAnyUserPermission([
+          'sales.cashiers',
+          'sales.cash',
+          'sales.reports'
+        ]);
+      allow create, update, delete: if sameCompany() &&
+        hasAnyUserPermission([
+          'sales.cashiers',
+          'sales.cash'
+        ]);
+    }
+
+    match /cash_registers/{document} {
+      allow read: if sameCompany() &&
+        hasAnyUserPermission([
+          'sales.cash',
+          'sales.cashiers',
+          'sales.reports'
+        ]);
+      allow create, update, delete: if sameCompany() &&
+        hasAnyUserPermission([
+          'sales.cash',
+          'sales.cashiers'
+        ]);
+    }
+
+    match /cash_register_incassations/{document} {
+      allow read: if sameCompany() &&
+        hasAnyUserPermission([
+          'sales.cash',
+          'sales.reports',
+          'sales.cashiers'
+        ]);
+      allow create, update, delete: if sameCompany() &&
+        hasAnyUserPermission([
+          'sales.cash',
+          'sales.cashiers'
+        ]);
+    }
+
+    match /shop_expenses/{document} {
+      allow read: if sameCompany() &&
+        hasAnyUserPermission([
+          'sales.view',
+          'sales.expenses',
+          'sales.profit.shop'
+        ]);
+      allow create, update, delete: if sameCompany() &&
+        hasAnyUserPermission([
+          'sales.expenses',
+          'sales.edit'
+        ]);
+    }
+
+    match /shops/{document} {
+      allow read: if sameCompany() &&
+        hasAnyUserPermission([
+          'sales.shops',
+          'sales.cashiers',
+          'sales.cash',
+          'sales.reports',
+          'sales.expenses',
+          'sales.profit.shop',
+          'analytics.sales',
+          'analytics.portfolio'
+        ]);
+      allow create, update, delete: if sameCompany() &&
+        hasAnyUserPermission([
+          'sales.shops',
+          'sales.edit'
+        ]);
+    }
+
+    match /clients/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /warehouse_movements/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /warehouses/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /staff_schedule/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /inventory_batches/{document} {
+      allow read: if sameCompany() &&
+        hasAnyUserPermission([
+          'sales.view',
+          'sales.cash',
+          'sales.reports',
+          'analytics.sales'
+        ]);
+      allow create, update, delete: if sameCompany() &&
+        hasAnyUserPermission([
+          'sales.add',
+          'sales.edit',
+          'sales.delete',
+          'sales.cash'
+        ]);
+    }
+
+    match /batches/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /inventory_reservations/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /customer_orders/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /customer_order_items/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /shipments/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /order_payments/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /company_profile/{document} {
+      allow read: if sameCompany();
+      allow create, update, delete: if sameCompany() &&
+        hasUserPermission('settings.rekviziti');
+    }
+
+    match /company_branches/{document} {
+      allow read: if sameCompany();
+      allow create, update, delete: if sameCompany() &&
+        hasAnyUserPermission([
+          'settings.rekviziti',
+          'company.org',
+          'company.hr'
+        ]);
+    }
+
+    match /company_departments/{document} {
+      allow read: if sameCompany();
+      allow create, update, delete: if sameCompany() &&
+        hasAnyUserPermission([
+          'settings.rekviziti',
+          'company.org',
+          'company.hr'
+        ]);
+    }
+
+    match /taxes/{document} {
+      allow read: if sameCompany() &&
+        hasUserPermission('settings.taxes');
+      allow create, update, delete: if sameCompany() &&
+        hasUserPermission('settings.taxes');
+    }
+
+    match /security_settings/{document} {
+      allow read: if isGlobalAdmin() || sameCompany();
+      allow create, update, delete: if isGlobalAdmin() ||
+        (sameCompany() && hasUserPermission('security.block'));
+    }
+
+    match /security_logs/{document} {
+      allow read: if isGlobalAdmin() || sameCompany();
+      allow create: if isGlobalAdmin() || sameCompany();
+      allow update, delete: if isGlobalAdmin();
+    }
+
+    match /security_pins/{document} {
+      allow read, update, delete: if isAuthed() &&
+        (
+          isGlobalAdmin() ||
+          (
+            sameCompany() &&
+            resource.data.user_id == request.auth.uid
+          )
+        );
+      allow create: if isAuthed() &&
+        (
+          isGlobalAdmin() ||
+          (
+            sameCompany() &&
+            request.resource.data.user_id == request.auth.uid
+          )
+        );
+    }
+
+    match /blocked_apps/{document} {
+      allow read: if sameCompany();
+      allow create, update, delete: if sameCompany() &&
+        hasUserPermission('security.block');
+    }
+
+    match /devices/{document} {
+      allow read, update, delete: if sameCompany();
+      allow create: if sameCompany();
+    }
+
+    match /device_commands/{document} {
+      allow read, update: if sameCompany();
+      allow create, delete: if sameCompany() &&
+        hasUserPermission('security.block');
+    }
+
+    match /activity_log/{document} {
+      allow create: if sameCompany();
+      allow read: if sameCompany() &&
+        hasAnyUserPermission([
+          'security.view',
+          'security.restore',
+          'security.delete',
+          'settings.view',
+          'settings.roles'
+        ]);
+      allow update, delete: if false;
+    }
+
+    match /data_restore_requests/{document} {
+      allow read: if sameCompany();
+      allow create, update, delete: if sameCompany() &&
+        hasUserPermission('security.restore');
+    }
+
+    match /data_delete_requests/{document} {
+      allow read: if sameCompany();
+      allow create, update, delete: if sameCompany() &&
+        hasUserPermission('security.delete');
+    }
+
+    match /support_tickets/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /billing_invoices/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /marketing_campaigns/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /items/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /currencies/{document} {
+      allow read: if true;
+      allow create, update, delete: if isGlobalAdmin() || sameCompany();
+    }
+
+    match /app_settings/{document} {
+      allow read, create, update, delete: if isGlobalAdmin();
+    }
+
+    match /admin_notifications/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /fin_models/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /invest_reports/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /margins/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /investments/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /product_portfolio/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /tariffs/{document} {
+      allow read: if true;
+      allow create, update, delete: if sameCompany();
+    }
+
+    match /employees/{document} {
+      allow read: if sameCompany();
+      allow create, update, delete: if sameCompany() &&
+        hasUserPermission('company.hr');
+    }
+
+    match /departments/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /company_accounts/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /company_expenses/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /balance_manual_values/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /user_wallets/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /personal_finance_categories/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /personal_finance_entries/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /user_expenses/{document} {
+      allow create, read, update, delete: if sameCompany();
+    }
+
+    match /audit_1c_runs/{document} {
+      allow create, read, update, delete: if sameCompany() &&
+        hasUserPermission('audit.view');
+    }
+
+    match /audit_1c_sync_settings/{document} {
+      allow create, read, update, delete: if sameCompany() &&
+        hasUserPermission('audit.view');
+    }
+  }
+}

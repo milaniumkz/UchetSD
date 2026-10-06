@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "783662285477",
+    "project_id": "uchet-9a732",
+    "storage_bucket": "uchet-9a732.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:783662285477:android:a1a31611fc6d2f4549c34c",
+        "android_client_info": {
+          "package_name": "kz.milanium.uchetsd"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBT_dMQ5HywYLM1OdE6kDKTL0T36CS8bj4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

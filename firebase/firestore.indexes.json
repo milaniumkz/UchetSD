@@ -1,0 +1,92 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "tranzaction",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "idCompany",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "tranzaction",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "idCompany",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "schetId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "audit_1c_runs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "idCompany",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "created_at",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "activity_log",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "idCompany",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "created_at",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "activity_log",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "entity",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "entity_id",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "warehouse_movements",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "idCompany",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "created_at",
+          "order": "DESCENDING"
+        }
+      ]
+    }
+  ]
+}

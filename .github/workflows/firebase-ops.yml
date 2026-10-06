@@ -1,0 +1,49 @@
+name: Firebase Ops
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Operation
+        type: choice
+        required: true
+        options:
+          - status
+          - hosting-channel-list
+          - functions-log
+      lines:
+        description: Log lines for functions-log
+        required: false
+        default: '50'
+
+concurrency:
+  group: firebase-ops-production
+  cancel-in-progress: false
+
+jobs:
+  ops:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Firebase project status
+        if: inputs.operation == 'status'
+        uses: w9jds/firebase-action@v13.32.0
+        with:
+          args: projects:list
+        env:
+          GCP_SA_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_UCHET_9A732 }}
+      - name: Firebase hosting channels
+        if: inputs.operation == 'hosting-channel-list'
+        uses: w9jds/firebase-action@v13.32.0
+        with:
+          args: hosting:channel:list --project uchet-9a732
+        env:
+          GCP_SA_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_UCHET_9A732 }}
+      - name: Firebase functions logs
+        if: inputs.operation == 'functions-log'
+        uses: w9jds/firebase-action@v13.32.0
+        with:
+          args: functions:log --project uchet-9a732 --limit ${{ inputs.lines }}
+        env:
+          GCP_SA_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_UCHET_9A732 }}
