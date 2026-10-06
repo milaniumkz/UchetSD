@@ -1,20 +1,21 @@
-name: CI
+name: Native Mac Pilot
 
 on:
-  pull_request:
   push:
-    branches: [main]
-
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+    branches: [codex/mac-ci-pilot]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: native-mac-UchetSD-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   flutter:
     name: Flutter checks
+    if: github.repository == 'milaniumkz/UchetSD' && (github.ref == 'refs/heads/codex/mac-ci-pilot' || github.ref == 'refs/heads/main')
     runs-on: ${{ github.event_name != 'pull_request' && fromJSON('["milanium-mac-arm64", "repo-UchetSD"]') || fromJSON('["ubuntu-latest"]') }}
     timeout-minutes: 45
     env:
@@ -46,6 +47,7 @@ jobs:
 
   functions:
     name: Firebase Functions checks
+    if: github.repository == 'milaniumkz/UchetSD' && (github.ref == 'refs/heads/codex/mac-ci-pilot' || github.ref == 'refs/heads/main')
     runs-on: ${{ github.event_name != 'pull_request' && fromJSON('["milanium-mac-arm64", "repo-UchetSD"]') || fromJSON('["ubuntu-latest"]') }}
     defaults:
       run:
