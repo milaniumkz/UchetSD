@@ -1,8 +1,10 @@
 ---
-name: CI
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+name: Full CI Verification
+'on':
+  push:
+    branches:
+    - codex/full-ci-pilot
+  workflow_dispatch: {}
 permissions:
   contents: read
 jobs:
@@ -38,6 +40,8 @@ jobs:
         || '' }}
     - run: flutter test
     - run: flutter build web --release --no-wasm-dry-run
+    if: github.repository == 'milaniumkz/UchetSD' && github.event_name != 'pull_request'
+      && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/codex/full-ci-pilot')
   functions:
     name: Firebase Functions checks
     runs-on: ${{ github.event_name != 'pull_request' && fromJSON('["milanium-mac-arm64",
@@ -71,8 +75,5 @@ jobs:
         /opt/homebrew/opt/node@20/bin/node -e 'if (process.versions.node.split(".")[0] !== "20") process.exit(1)'
     - run: npm ci
     - run: npm run lint
-'on':
-  pull_request: 
-  push:
-    branches:
-    - main
+    if: github.repository == 'milaniumkz/UchetSD' && github.event_name != 'pull_request'
+      && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/codex/full-ci-pilot')
